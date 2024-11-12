@@ -1,5 +1,13 @@
 # FastAPI-BitNet
 
+This project uses a combination of [Uvicorn](https://www.uvicorn.org/), [FastAPI](https://fastapi.tiangolo.com/) (Python) and [Docker](https://www.docker.com/) to provide a reliable REST API for testing [Microsoft's BitNet](https://github.com/microsoft/BitNet) out locally!
+
+It supports running the inference framework, running BitNet model benchmarks and calculating BitNet model perplexity values.
+
+It's offers the same functionality as the [Electron-BitNet](https://github.com/grctest/Electron-BitNet) project, however it does so through a REST API which devs/researchers can use to automate testing/benchmarking of 1-bit BitNet models!
+
+## Setup instructions
+
 Install Conda: https://anaconda.org/anaconda/conda
 
 Initialize the python environment:
