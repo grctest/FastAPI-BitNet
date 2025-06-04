@@ -25,7 +25,7 @@ Install the Huggingface-CLI tool to download the models:
 ```
 pip install -U "huggingface_hub[cli]"
 ```
-
+ 
 Download Microsoft's official BitNet model:
 ```
 huggingface-cli download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir app/models/BitNet-b1.58-2B-4T
