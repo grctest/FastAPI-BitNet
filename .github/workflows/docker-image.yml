@@ -12,6 +12,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Set up Python (no need for full Anaconda in CI)
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Install huggingface_hub CLI
+      - name: Install huggingface_hub CLI
+        run: pip install -U "huggingface_hub[cli]"
+
+      # Cache the downloaded model directory
+      - name: Cache HuggingFace model
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: app/models/BitNet-b1.58-2B-4T
+          key: bitnet-model-${{ hashFiles('**/docker-image.yml') }}
+
+      # Download the model if not cached
+      - name: Download BitNet model
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        run: |
+          huggingface-cli download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir app/models/BitNet-b1.58-2B-4T
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
