@@ -251,7 +251,7 @@ class ChatRequest(BaseModel):
     n_predict: int = 256
     temperature: float = 0.8
 
-def chat_with_bitnet(
+async def chat_with_bitnet(
     chat: ChatRequest
 ):
     """
