@@ -47,7 +47,7 @@ def _max_threads():
 async def initialize_server_endpoint(
     threads: int = Query(1, gt=0, le=os.cpu_count()),
     ctx_size: int = Query(2048, gt=0),
-    port: int = Query(8081, gt=8080, le=65535),
+    port: int = Query(8081, gt=8081, le=65535),
     system_prompt: str = Query("You are a helpful assistant.", description="Unique system prompt for this server instance"),
     n_predict: int = Query(256, gt=0, description="Number of tokens to predict for the server instance."),
     temperature: float = Query(0.8, gt=0.0, le=2.0, description="Temperature for sampling")
@@ -263,7 +263,7 @@ async def chat_with_bitnet(
     proc = server_processes.get(key)
     cfg = server_configs.get(key)
     if not (proc and proc.poll() is None and cfg):
-        raise HTTPException(status_code=503, detail=f"bitnet server not running on {host}:{chat.port}. Initialize it first.")
+        raise HTTPException(status_code=404, detail=f"Server on port {chat.port} not running or not configured.")
     server_url = f"http://{host}:{chat.port}/completion"
     payload = {
         "prompt": chat.message,
@@ -272,26 +272,24 @@ async def chat_with_bitnet(
         "n_predict": chat.n_predict,
         "temperature": chat.temperature
     }
+    # Use httpx for async requests
     async def _chat():
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.post(server_url, json=payload, timeout=180.0)
-                response.raise_for_status()
-                result_data = response.json()
-                content = result_data.get("content", result_data)
-                return {"result": content}
-            except httpx.TimeoutException:
-                raise HTTPException(status_code=504, detail="Request to bitnet server timed out.")
+                response = await client.post(server_url, json=payload, timeout=60.0) # Increased timeout
+                response.raise_for_status()  # Raise an exception for bad status codes
+                return response.json()
+            except httpx.ReadTimeout:
+                raise HTTPException(status_code=504, detail=f"Request to BitNet server on port {chat.port} timed out.")
             except httpx.ConnectError:
-                raise HTTPException(status_code=503, detail=f"Could not connect to bitnet server at {server_url}. Is it running?")
-            except httpx.RequestError as e:
-                raise HTTPException(status_code=500, detail=f"Error during request to bitnet server: {str(e)}")
+                raise HTTPException(status_code=503, detail=f"Could not connect to BitNet server on port {chat.port}.")
             except httpx.HTTPStatusError as e:
-                error_detail = e.response.text or str(e)
-                raise HTTPException(status_code=e.response.status_code, detail=f"bitnet server returned error: {error_detail}")
+                raise HTTPException(status_code=e.response.status_code, detail=f"BitNet server error: {e.response.text}")
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Unexpected error during chat: {str(e)}")
-    return _chat
+                # Catch any other unexpected errors during the chat process
+                error_detail = f"An unexpected error occurred while communicating with BitNet server on port {chat.port}: {str(e)}"
+                raise HTTPException(status_code=500, detail=error_detail)
+    return await _chat()
 
 class MultiChatRequest(BaseModel):
     requests: List[ChatRequest]
@@ -299,7 +297,7 @@ class MultiChatRequest(BaseModel):
 async def multichat_with_bitnet(multichat: MultiChatRequest):
     async def run_chat(chat_req: ChatRequest):
         chat_fn = chat_with_bitnet(chat_req)
-        return await chat_fn()
+        return await chat_fn
     results = await asyncio.gather(*(run_chat(req) for req in multichat.requests), return_exceptions=True)
     # Format results: if exception, return error message
     formatted = []
