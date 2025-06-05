@@ -42,3 +42,15 @@ docker run -d --name ai_container -p 8080:8080 fastapi_bitnet
 ```
 
 Once it's running navigate to http://127.0.0.1:8080/docs
+
+## Docker hub repository
+
+You can fetch the dockerfile at: https://hub.docker.com/repository/docker/grctest/fastapi_bitnet/general
+
+## How to add to VSCode!
+
+Run the dockerfile locally using the command above, then navigate to the VSCode Copilot chat window and find the wrench icon "Configure Tools...".
+
+In the tool configuration overview scroll to the bottom and select 'Add more tools...' then '+ Add MCP Server' then 'HTTP'.
+
+Enter into the URL field `http://127.0.0.1:8080/mcp` then your copilot will be able to launch new bitnet server instances and chat with them.

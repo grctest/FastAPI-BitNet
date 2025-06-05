@@ -1,4 +1,4 @@
-# --- Braincell Orchestrator (Middleman Proxy) ---
+# --- bitnet Orchestrator (Middleman Proxy) ---
 from pydantic import BaseModel
 
 from fastapi import FastAPI, HTTPException, Query, Depends
@@ -9,6 +9,11 @@ import subprocess
 import atexit
 import time
 import httpx
+
+from typing import List
+from pydantic import BaseModel, Field
+from fastapi import HTTPException
+import asyncio
 
 # --- Server Process Management ---
 # Each server instance is tracked by a unique (host, port) key
@@ -40,12 +45,11 @@ def _max_threads():
     return os.cpu_count() or 1
 
 async def initialize_server_endpoint(
-    model: ModelEnum,
-    threads: int = Query(os.cpu_count() // 2, gt=0, le=os.cpu_count()),
+    threads: int = Query(1, gt=0, le=os.cpu_count()),
     ctx_size: int = Query(2048, gt=0),
-    port: int = Query(8081, gt=1023),
+    port: int = Query(8081, gt=8080, le=65535),
     system_prompt: str = Query("You are a helpful assistant.", description="Unique system prompt for this server instance"),
-    n_predict: int = Query(4096, gt=0, description="Number of tokens to predict for the server instance"),
+    n_predict: int = Query(256, gt=0, description="Number of tokens to predict for the server instance."),
     temperature: float = Query(0.8, gt=0.0, le=2.0, description="Temperature for sampling")
 ):
     """
@@ -71,7 +75,7 @@ async def initialize_server_endpoint(
         raise HTTPException(status_code=429, detail=f"Cannot start server: would oversubscribe CPU threads (in use: {threads_in_use}, requested: {threads}, max: {max_threads})")
     command = [
         server_path,
-        '-m', model.value,
+        '-m', "models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf",
         '-c', str(ctx_size),
         '-t', str(threads),
         '-n', str(n_predict),
@@ -96,7 +100,7 @@ async def initialize_server_endpoint(
             raise HTTPException(status_code=500, detail=f"Server failed to start. Stderr: {stderr_output}")
         server_processes[key] = proc
         server_configs[key] = {
-            "model": model.value,
+            "model": "models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf",
             "threads": threads,
             "ctx_size": ctx_size,
             "host": host,
@@ -241,43 +245,70 @@ def get_model_sizes():
 
 class ChatRequest(BaseModel):
     message: str
-    port: int
-    # Optionally add user/session id, etc.
+    port: int = 8081
+    threads: int = 1
+    ctx_size: int = 2048
+    n_predict: int = 256
+    temperature: float = 0.8
 
-def chat_with_braincell(
+def chat_with_bitnet(
     chat: ChatRequest
 ):
     """
-    Middleman endpoint: receives a chat message and forwards it to the specified braincell (llama server instance) by port.
-    Returns the response from the braincell.
+    Middleman endpoint: receives a chat message and forwards it to the specified bitnet (llama server instance) by port.
+    Returns the response from the bitnet.
     """
     host = "127.0.0.1"
     key = (host, chat.port)
     proc = server_processes.get(key)
     cfg = server_configs.get(key)
     if not (proc and proc.poll() is None and cfg):
-        raise HTTPException(status_code=503, detail=f"Braincell server not running on {host}:{chat.port}. Initialize it first.")
+        raise HTTPException(status_code=503, detail=f"bitnet server not running on {host}:{chat.port}. Initialize it first.")
     server_url = f"http://{host}:{chat.port}/completion"
     payload = {
-        "prompt": chat.message
+        "prompt": chat.message,
+        "threads": chat.threads,
+        "ctx_size": chat.ctx_size,
+        "n_predict": chat.n_predict,
+        "temperature": chat.temperature
     }
     async def _chat():
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.post(server_url, json=payload, timeout=120.0)
+                response = await client.post(server_url, json=payload, timeout=180.0)
                 response.raise_for_status()
                 result_data = response.json()
                 content = result_data.get("content", result_data)
                 return {"result": content}
             except httpx.TimeoutException:
-                raise HTTPException(status_code=504, detail="Request to braincell server timed out.")
+                raise HTTPException(status_code=504, detail="Request to bitnet server timed out.")
             except httpx.ConnectError:
-                raise HTTPException(status_code=503, detail=f"Could not connect to braincell server at {server_url}. Is it running?")
+                raise HTTPException(status_code=503, detail=f"Could not connect to bitnet server at {server_url}. Is it running?")
             except httpx.RequestError as e:
-                raise HTTPException(status_code=500, detail=f"Error during request to braincell server: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Error during request to bitnet server: {str(e)}")
             except httpx.HTTPStatusError as e:
                 error_detail = e.response.text or str(e)
-                raise HTTPException(status_code=e.response.status_code, detail=f"Braincell server returned error: {error_detail}")
+                raise HTTPException(status_code=e.response.status_code, detail=f"bitnet server returned error: {error_detail}")
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Unexpected error during chat: {str(e)}")
     return _chat
+
+class MultiChatRequest(BaseModel):
+    requests: List[ChatRequest]
+
+async def multichat_with_bitnet(multichat: MultiChatRequest):
+    async def run_chat(chat_req: ChatRequest):
+        chat_fn = chat_with_bitnet(chat_req)
+        return await chat_fn()
+    results = await asyncio.gather(*(run_chat(req) for req in multichat.requests), return_exceptions=True)
+    # Format results: if exception, return error message
+    formatted = []
+    for res in results:
+        if isinstance(res, Exception):
+            if isinstance(res, HTTPException):
+                formatted.append({"error": res.detail, "status_code": res.status_code})
+            else:
+                formatted.append({"error": str(res)})
+        else:
+            formatted.append(res)
+    return {"results": formatted}
