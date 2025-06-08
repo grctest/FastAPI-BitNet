@@ -47,6 +47,12 @@ Once it's running navigate to http://127.0.0.1:8080/docs
 
 You can fetch the dockerfile at: https://hub.docker.com/repository/docker/grctest/fastapi_bitnet/general
 
+## See also - VSCode Extension!
+
+https://github.com/grctest/BitNet-VSCode-Extension
+
+https://marketplace.visualstudio.com/items?itemName=nftea-gallery.bitnet-vscode-extension
+
 ## How to add to VSCode!
 
 Run the dockerfile locally using the command above, then navigate to the VSCode Copilot chat window and find the wrench icon "Configure Tools...".
