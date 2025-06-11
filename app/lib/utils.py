@@ -1,17 +1,5 @@
 from typing import Dict, Any, List
 import re
-from fastapi import HTTPException
-import subprocess
-
-def run_command(command: List[str]) -> str:
-    """Run a system command and capture its output."""
-    try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Error occurred while running command: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
 def parse_benchmark_data(log: str) -> List[Dict[str, str]]:
     lines = log.strip().split('\n')

@@ -1,14 +1,15 @@
-from fastapi import FastAPI, Query, HTTPException
+import psutil
 import os
-from fastapi_mcp import FastApiMCP
-from lib.models import ModelEnum
-import lib.endpoints as endpoints
-from lib.endpoints import (
-    chat_with_bitnet, ChatRequest, 
-    multichat_with_bitnet, MultiChatRequest,
-    BatchServerInitRequest, BatchServerPortRequest # Added batch request models
-)
 import logging
+from fastapi import FastAPI, Query, HTTPException
+from fastapi_mcp import FastApiMCP
+
+from lib.models import ModelEnum
+from lib.endpoints.chat_endpoints import ChatRequest, MultiChatRequest
+from lib.endpoints.chat_endpoints import chat_with_bitnet, multichat_with_bitnet
+from lib.endpoints.server_endpoints import BatchServerInitRequest, BatchServerPortRequest
+from lib.endpoints.server_endpoints import initialize_server_endpoint, initialize_batch_servers_endpoint, shutdown_server_endpoint, shutdown_batch_servers_endpoint, get_server_status, get_batch_server_status_endpoint
+from lib.endpoints.benchmark_endpoints import run_benchmark, run_perplexity, get_model_sizes
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -16,6 +17,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
+
 logger = logging.getLogger(__name__)
 
 # --- FastAPI Application ---
@@ -24,15 +26,60 @@ app = FastAPI(
     description="An API for managing and interacting with BitNet server instances (based on llama.cpp). \\nProvides endpoints for initializing, shutting down, and checking the status of individual and batch BitNet servers, \\nrunning benchmarks, calculating perplexity, and performing chat completions.",
     version="0.1.0",
     contact={
-        "name": "API Support",
-        "url": "http://example.com/contact", # Replace with actual contact/repo URL
-        "email": "support@example.com",    # Replace with actual support email
+        "name": "Project Mantainers",
+        "url": "https://github.com/grctest/FastAPI-BitNet",
     },
     license_info={
         "name": "MIT License", # Or your chosen license
         "url": "https://opensource.org/licenses/MIT", # Link to license
     },
 )
+
+@app.get(
+    "/estimate",
+    summary="Estimate max BitNet servers by RAM and CPU threads",
+    tags=["Server Management"]
+)
+async def bitnet_server_capacity(per_server_gb: float = 1.5):
+    """
+    Estimate the maximum number of BitNet server instances that can be run on this machine.
+
+    This endpoint provides a quick estimate for the AI or user to determine how many 1-thread BitNet servers can be launched,
+    based on two system resource constraints:
+    
+    1. **Available RAM**: Calculates the number of servers that can be run given the currently available RAM (default 1GB per server).
+    2. **CPU Threads**: Calculates the number of servers that could be run if each uses a single CPU thread (based on total logical CPUs).
+
+    Args:
+        per_server_gb (float, optional): Estimated RAM usage per server in GB. Defaults to 1.5.
+
+    Returns:
+        dict: {
+            "max_1thread_servers_by_available_ram": int,  # Max servers by available RAM
+            "available_ram_gb": float,                    # Currently available RAM in GB
+            "total_ram_gb": float,                        # Total system RAM in GB
+            "max_1thread_servers_by_cpu_threads": int,    # Max servers by total CPU threads
+            "cpu_threads": int,                           # Number of logical CPU threads
+            "note": str                                   # Guidance for users/AI
+        }
+    """
+    total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+    available_ram_gb = psutil.virtual_memory().available / (1024 ** 3)
+    max_ram_servers = int(available_ram_gb // per_server_gb)
+    cpu_threads = os.cpu_count() or 1
+    max_cpu_servers = cpu_threads
+    return {
+        "max_1thread_servers_by_available_ram": max_ram_servers,
+        "available_ram_gb": round(available_ram_gb, 2),
+        "total_ram_gb": round(total_ram_gb, 2),
+        "max_1thread_servers_by_cpu_threads": max_cpu_servers,
+        "cpu_threads": cpu_threads,
+        "note": (
+            "You can run up to the minimum of these two values. "
+            "Freeing up RAM may increase the RAM-based limit. "
+            "CPU thread count is a hardware maximum, not current usage."
+        )
+    }
 
 @app.post("/initialize-server", summary="Initialize a Single BitNet Server", tags=["Server Management"])
 async def initialize_server(
@@ -71,7 +118,7 @@ async def initialize_server(
     - `500 Internal Server Error`: If the server binary is not found or fails to start for other reasons.
     """
     try:
-        return await endpoints.initialize_server_endpoint(
+        return await initialize_server_endpoint(
             threads=threads,
             ctx_size=ctx_size,
             port=port,
@@ -126,7 +173,7 @@ async def shutdown_server(port: int = Query(..., gt=1023, description="The port 
     - `500 Internal Server Error`: If an error occurs during the termination process.
     """
     try:
-        return await endpoints.shutdown_server_endpoint(port=port)
+        return await shutdown_server_endpoint(port=port)
     except HTTPException as e: # Re-raise HTTPExceptions directly
         raise e
     except Exception as e:
@@ -149,7 +196,7 @@ async def server_status_endpoint(port: int = Query(..., gt=1023, description="Th
       If running: `{"status": "running", "pid": 12345, "config": {...}}`
       If stopped: `{"status": "stopped", "config": {...}}` or `{"status": "stopped", "config": "No configuration found for port XXXX."}`
     """
-    return await endpoints.get_server_status(port=port) # Call the function from endpoints.py
+    return await get_server_status(port=port) # Call the function from endpoints.py
 
 # --- Batch Server Endpoints ---
 @app.post("/initialize-batch-servers", summary="Initialize Multiple BitNet Servers", tags=["Batch Server Management"])
@@ -181,7 +228,7 @@ async def initialize_batch_servers(request: BatchServerInitRequest):
       200 OK response list.
     """
     try:
-        return await endpoints.initialize_batch_servers_endpoint(request=request)
+        return await initialize_batch_servers_endpoint(request=request)
     except HTTPException as e: # Catch HTTPExceptions specifically to re-raise them
         raise e
     except Exception as e:
@@ -210,7 +257,7 @@ async def shutdown_batch_servers(request: BatchServerPortRequest):
       Individual server shutdown failures/statuses are reported in the 200 OK response list.
     """
     try:
-        return await endpoints.shutdown_batch_servers_endpoint(request=request)
+        return await shutdown_batch_servers_endpoint(request=request)
     except Exception as e:
         logger.error("Error in /shutdown-batch-servers endpoint", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during batch server shutdown: {str(e)}")
@@ -233,7 +280,7 @@ async def batch_server_status(request: BatchServerPortRequest):
     - `500 Internal Server Error`: If an unexpected error occurs during the batch processing logic.
     """
     try:
-        return await endpoints.get_batch_server_status_endpoint(request=request)
+        return await get_batch_server_status_endpoint(request=request)
     except Exception as e:
         logger.error("Error in /batch-server-status endpoint", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred while fetching batch server status: {str(e)}")
@@ -266,7 +313,7 @@ async def benchmark(
     - `500 Internal Server Error`: If the benchmark binary is not found or the benchmark process fails.
     """
     try:
-        return await endpoints.run_benchmark(model, n_token, threads, n_prompt)
+        return await run_benchmark(model, n_token, threads, n_prompt)
     except Exception as e:
         logger.error(f"Error in /benchmark endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -302,7 +349,7 @@ async def perplexity(
     - `500 Internal Server Error`: If the perplexity binary is not found or the calculation process fails.
     """
     try:
-        return await endpoints.run_perplexity(model, prompt, threads, ctx_size, ppl_stride)
+        return await run_perplexity(model, prompt, threads, ctx_size, ppl_stride)
     except Exception as e:
         logger.error(f"Error in /perplexity endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -322,7 +369,7 @@ def model_sizes():
       containing `bytes`, `MB`, and `GB` sizes.
       Example: `{"ggml-model-i2_s.gguf": {"bytes": 2000000000, "MB": 1907.349, "GB": 1.863}}`
     """
-    return endpoints.get_model_sizes()
+    return get_model_sizes()
 
 @app.post("/chat", summary="Chat with a BitNet Server Instance", tags=["Interaction"])
 async def chat(chat_request: ChatRequest): # Renamed 'chat' to 'chat_request' to avoid conflict

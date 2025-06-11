@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt && \
-    pip install "fastapi[standard]" "uvicorn[standard]" httpx fastapi-mcp
+    pip install "fastapi[standard]" "uvicorn[standard]" httpx fastapi-mcp psutil
 
 # (Optional) Run your setup_env.py if needed
 RUN python /code/setup_env.py -md /code/models/BitNet-b1.58-2B-4T -q i2_s

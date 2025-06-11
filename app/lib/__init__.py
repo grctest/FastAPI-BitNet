@@ -1,4 +1,4 @@
-from .endpoints import ChatRequest
+from .endpoints.chat_endpoints import ChatRequest
 from typing import List
 from pydantic import BaseModel
 
