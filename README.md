@@ -1,4 +1,4 @@
-# FastAPI-BitNet Orchestrator
+# FastAPI-BitNet
 
 This project provides a robust REST API built with FastAPI and Docker to manage and interact with `llama.cpp`-based BitNet model instances. It allows developers and researchers to programmatically control `llama-cli` processes for automated testing, benchmarking, and interactive chat sessions.
 
