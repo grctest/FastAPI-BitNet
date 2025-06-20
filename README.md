@@ -1,6 +1,6 @@
 # FastAPI-BitNet
 
-This project uses a combination of [Uvicorn](https://www.uvicorn.org/), [FastAPI](https://fastapi.tiangolo.com/) (Python) and [Docker](https://www.docker.com/) to provide a reliable REST API for testing [Microsoft's BitNet](https://github.com/microsoft/BitNet) out locally!
+This project uses a combination of [Uvicorn](https://www.uvicorn.org/), [FastAPI](https://fastapi.tiangolo.com/) (Python) and [Docker](https://www.docker.com/) to provide a reliable REST API for testing [Microsoft's BitNet inference framework](https://github.com/microsoft/BitNet) out locally, specifically their [BitNet b1.58 2B4T](https://huggingface.co/microsoft/bitnet-b1.58-2B-4T) model!
 
 It supports running the inference framework, running BitNet model benchmarks and calculating BitNet model perplexity values.
 
