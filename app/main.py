@@ -1,15 +1,53 @@
 import psutil
 import os
 import logging
-from fastapi import FastAPI, Query, HTTPException
+
+from fastapi import FastAPI, Query, HTTPException, Body, status, Path
 from fastapi_mcp import FastApiMCP
 
-from lib.models import ModelEnum
+from lib.models import (
+    ModelEnum, 
+    LlamaCliInitRequest, 
+    LlamaCliInstanceInfo, 
+    LlamaCliChatRequest,
+    BatchLlamaCliInitRequest,
+    BatchLlamaCliRemoveRequest,
+    BatchLlamaCliChatRequest
+)
+
 from lib.endpoints.chat_endpoints import ChatRequest, MultiChatRequest
-from lib.endpoints.chat_endpoints import chat_with_bitnet, multichat_with_bitnet
 from lib.endpoints.server_endpoints import BatchServerInitRequest, BatchServerPortRequest
-from lib.endpoints.server_endpoints import initialize_server_endpoint, initialize_batch_servers_endpoint, shutdown_server_endpoint, shutdown_batch_servers_endpoint, get_server_status, get_batch_server_status_endpoint
-from lib.endpoints.benchmark_endpoints import run_benchmark, run_perplexity, get_model_sizes
+
+from lib.endpoints.chat_endpoints import (
+    handle_chat_with_bitnet_server,
+    handle_multichat_with_bitnet_server
+)
+
+from lib.endpoints.server_endpoints import (
+    handle_initialize_server,
+    handle_initialize_batch_servers,
+    handle_shutdown_server,
+    handle_shutdown_batch_servers,
+    handle_get_server_status,
+    handle_get_batch_server_status
+)
+
+from lib.endpoints.benchmark_endpoints import (
+    run_benchmark,
+    run_perplexity,
+    get_model_sizes
+)
+
+# --- REFACTORED IMPORTS for persistent CLI sessions ---
+from lib.endpoints.llama_cli_endpoints import (
+    initialize_llama_cli_session,
+    shutdown_llama_cli_session,
+    get_llama_cli_session_status,
+    chat_with_llama_cli_session,
+    handle_initialize_batch_llama_cli_configs,
+    handle_remove_batch_llama_cli_configs,
+    handle_batch_chat_with_llama_cli
+)
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -23,8 +61,8 @@ logger = logging.getLogger(__name__)
 # --- FastAPI Application ---
 app = FastAPI(
     title="FastAPI BitNet Orchestrator",
-    description="An API for managing and interacting with BitNet server instances (based on llama.cpp). \\nProvides endpoints for initializing, shutting down, and checking the status of individual and batch BitNet servers, \\nrunning benchmarks, calculating perplexity, and performing chat completions.",
-    version="0.1.0",
+    description="An API for managing and interacting with BitNet llama server & cli instances. \\nProvides endpoints for initializing bitnet, shutting down instances, and checking instance statuses, \\nrunning benchmarks, calculating perplexity, and chatting with the BitNet instances.",
+    version="0.2.0",
     contact={
         "name": "Project Mantainers",
         "url": "https://github.com/grctest/FastAPI-BitNet",
@@ -38,7 +76,8 @@ app = FastAPI(
 @app.get(
     "/estimate",
     summary="Estimate max BitNet servers by RAM and CPU threads",
-    tags=["Server Management"]
+    tags=["Server Management"],
+    operation_id="estimate_max_bitnet_servers"
 )
 async def bitnet_server_capacity(per_server_gb: float = 1.5):
     """
@@ -81,7 +120,12 @@ async def bitnet_server_capacity(per_server_gb: float = 1.5):
         )
     }
 
-@app.post("/initialize-server", summary="Initialize a Single BitNet Server", tags=["Server Management"])
+@app.post(
+    "/initialize-server", 
+    summary="Initialize a Single BitNet Server", 
+    tags=["Server Management"], 
+    operation_id="initialize_single_bitnet_server"
+)
 async def initialize_server(
     threads: int = Query(os.cpu_count() // 2, gt=0, le=os.cpu_count(), description="Number of threads for the server instance. Must be > 0 and <= system CPU count."),
     ctx_size: int = Query(2048, gt=0, description="Context size (in tokens) for the server instance. Must be > 0."),
@@ -118,7 +162,7 @@ async def initialize_server(
     - `500 Internal Server Error`: If the server binary is not found or fails to start for other reasons.
     """
     try:
-        return await initialize_server_endpoint(
+        return await handle_initialize_server(
             threads=threads,
             ctx_size=ctx_size,
             port=port,
@@ -149,7 +193,12 @@ def validate_thread_allocation(requests):
             detail=f"Total requested threads ({total_requested}) exceed available threads ({max_threads})."
         )
 
-@app.post("/shutdown-server", summary="Shutdown a Single BitNet Server", tags=["Server Management"])
+@app.post(
+    "/shutdown-server", 
+    summary="Shutdown a Single BitNet Server", 
+    tags=["Server Management"], 
+    operation_id="shutdown_single_bitnet_server"
+)
 async def shutdown_server(port: int = Query(..., gt=1023, description="The port of the BitNet server instance to shut down.")):
     """
     Shuts down a specific BitNet server instance managed by this orchestrator.
@@ -173,14 +222,19 @@ async def shutdown_server(port: int = Query(..., gt=1023, description="The port 
     - `500 Internal Server Error`: If an error occurs during the termination process.
     """
     try:
-        return await shutdown_server_endpoint(port=port)
+        return await handle_shutdown_server(port=port)
     except HTTPException as e: # Re-raise HTTPExceptions directly
         raise e
     except Exception as e:
         logger.error(f"Error in /shutdown-server endpoint for port {port}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/server-status", summary="Get Status of a Single BitNet Server", tags=["Server Management"])
+@app.get(
+    "/server-status", 
+    summary="Get Status of a Single BitNet Server", 
+    tags=["Server Management"], 
+    operation_id="get_single_bitnet_server_status"
+)
 async def server_status_endpoint(port: int = Query(..., gt=1023, description="The port of the BitNet server instance to check.")):
     """
     Retrieves the status of a specific BitNet server instance.
@@ -196,10 +250,15 @@ async def server_status_endpoint(port: int = Query(..., gt=1023, description="Th
       If running: `{"status": "running", "pid": 12345, "config": {...}}`
       If stopped: `{"status": "stopped", "config": {...}}` or `{"status": "stopped", "config": "No configuration found for port XXXX."}`
     """
-    return await get_server_status(port=port) # Call the function from endpoints.py
+    return await handle_get_server_status(port=port) # Call the function from endpoints.py
 
 # --- Batch Server Endpoints ---
-@app.post("/initialize-batch-servers", summary="Initialize Multiple BitNet Servers", tags=["Batch Server Management"])
+@app.post(
+    "/initialize-batch-servers", 
+    summary="Initialize Multiple BitNet Servers", 
+    tags=["Batch Server Management"], 
+    operation_id="initialize_batch_bitnet_servers"
+)
 async def initialize_batch_servers(request: BatchServerInitRequest):
     """
     Initializes and starts multiple BitNet server instances based on a list of configurations.
@@ -228,14 +287,19 @@ async def initialize_batch_servers(request: BatchServerInitRequest):
       200 OK response list.
     """
     try:
-        return await initialize_batch_servers_endpoint(request=request)
+        return await handle_initialize_batch_servers(request=request)
     except HTTPException as e: # Catch HTTPExceptions specifically to re-raise them
         raise e
     except Exception as e:
         logger.error("Error in /initialize-batch-servers endpoint", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during batch server initialization: {str(e)}")
 
-@app.post("/shutdown-batch-servers", summary="Shutdown Multiple BitNet Servers", tags=["Batch Server Management"])
+@app.post(
+    "/shutdown-batch-servers", 
+    summary="Shutdown Multiple BitNet Servers", 
+    tags=["Batch Server Management"], 
+    operation_id="shutdown_batch_bitnet_servers"
+)
 async def shutdown_batch_servers(request: BatchServerPortRequest):
     """
     Shuts down multiple BitNet server instances based on a list of port numbers.
@@ -250,19 +314,24 @@ async def shutdown_batch_servers(request: BatchServerPortRequest):
     **Successful Response (200 OK)**:
     - A JSON list where each item corresponds to a port in the request, detailing the
       outcome of its shutdown attempt (e.g., success_terminated, denied, not_found, error_termination_failed).
-      Example: `[{"port": 8082, "status": "success_terminated", "message": "..."}, {"port": 8083, "status": "not_found", "message": "..."}]`
+      Example: `[{"port": 8082, "status": "success_terminated", "message": "..."}]`
 
     **Error Responses**:
     - `500 Internal Server Error`: If an unexpected error occurs during the batch processing logic.
       Individual server shutdown failures/statuses are reported in the 200 OK response list.
     """
     try:
-        return await shutdown_batch_servers_endpoint(request=request)
+        return await handle_shutdown_batch_servers(request=request)
     except Exception as e:
         logger.error("Error in /shutdown-batch-servers endpoint", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during batch server shutdown: {str(e)}")
 
-@app.post("/batch-server-status", summary="Get Status of Multiple BitNet Servers", tags=["Batch Server Management"])
+@app.post(
+    "/batch-server-status", 
+    summary="Get Status of Multiple BitNet Servers", 
+    tags=["Batch Server Management"], 
+    operation_id="get_batch_bitnet_server_status"
+)
 async def batch_server_status(request: BatchServerPortRequest):
     """
     Retrieves the status of multiple BitNet server instances based on a list of port numbers.
@@ -280,12 +349,17 @@ async def batch_server_status(request: BatchServerPortRequest):
     - `500 Internal Server Error`: If an unexpected error occurs during the batch processing logic.
     """
     try:
-        return await get_batch_server_status_endpoint(request=request)
+        return await handle_get_batch_server_status(request=request)
     except Exception as e:
         logger.error("Error in /batch-server-status endpoint", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred while fetching batch server status: {str(e)}")
 
-@app.get("/benchmark", summary="Run Benchmark on a BitNet Model", tags=["Utilities"])
+@app.get(
+    "/benchmark", 
+    summary="Run Benchmark on a BitNet Model", 
+    tags=["Utilities"], 
+    operation_id="run_benchmark_on_model"
+)
 async def benchmark(
     model: ModelEnum = Query(..., description="The BitNet model to benchmark. See `ModelEnum` for available models."),
     n_token: int = Query(128, gt=0, description="Number of tokens to process in the benchmark. Must be > 0."),
@@ -318,7 +392,12 @@ async def benchmark(
         logger.error(f"Error in /benchmark endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/perplexity", summary="Calculate Perplexity for a BitNet Model", tags=["Utilities"])
+@app.get(
+    "/perplexity", 
+    summary="Calculate Perplexity for a BitNet Model", 
+    tags=["Utilities"], 
+    operation_id="calculate_perplexity_for_model"
+)
 async def perplexity(
     model: ModelEnum = Query(..., description="The BitNet model for perplexity calculation. See `ModelEnum`."),
     prompt: str = Query(..., description="Input text (prompt) for perplexity calculation. Must meet minimum length requirements based on context size."),
@@ -354,7 +433,12 @@ async def perplexity(
         logger.error(f"Error in /perplexity endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/model-sizes", summary="Get Sizes of Available BitNet Models", tags=["Utilities"])
+@app.get(
+    "/model-sizes", 
+    summary="Get Sizes of Available BitNet Models", 
+    tags=["Utilities"], 
+    operation_id="get_available_model_sizes"
+)
 def model_sizes():
     """
     Retrieves the file sizes of all available .gguf model files in the 'models' directory.
@@ -371,7 +455,12 @@ def model_sizes():
     """
     return get_model_sizes()
 
-@app.post("/chat", summary="Chat with a BitNet Server Instance", tags=["Interaction"])
+@app.post(
+    "/chat", 
+    summary="Chat with a BitNet Server Instance", 
+    tags=["Interaction"], 
+    operation_id="chat_with_bitnet_server"
+)
 async def chat(chat_request: ChatRequest): # Renamed 'chat' to 'chat_request' to avoid conflict
     """
     Forwards a chat message to a specified, running BitNet server instance and returns its response.
@@ -401,7 +490,7 @@ async def chat(chat_request: ChatRequest): # Renamed 'chat' to 'chat_request' to
     - `500 Internal Server Error`: For other unexpected errors during the forwarding process.
     """
     try:
-        return await chat_with_bitnet(chat_request)
+        return await handle_chat_with_bitnet_server(chat_request)
     except HTTPException as e: # Re-raise HTTPExceptions directly
         raise e
     except Exception as e:
@@ -409,8 +498,210 @@ async def chat(chat_request: ChatRequest): # Renamed 'chat' to 'chat_request' to
         # Ensure a generic message for unexpected errors to avoid leaking details
         raise HTTPException(status_code=500, detail="An unexpected error occurred while processing the chat request.")
 
+# --- Llama CLI Management Endpoints ---
+# REFACTORED to manage persistent conversational processes
+
+@app.post(
+    "/initialize-llama-cli", 
+    summary="Start a Persistent Llama CLI Session", 
+    tags=["Llama CLI Management"], 
+    operation_id="start_persistent_llama_cli_session"
+)
+async def initialize_llama_cli(init_request: LlamaCliInitRequest = Body(...)):
+    """
+    Starts a new persistent `llama-cli` process in conversational mode.
+
+    This endpoint launches a `llama-cli` instance that remains running in the background,
+    ready to accept multiple prompts via the `/chat-llama-cli` endpoint.
+    Each session is identified by a unique `cli_alias`.
+
+    **Request Body**:
+    - `LlamaCliInitRequest`: Defines the parameters for the `llama-cli` process.
+      The `cli_alias` will be the unique identifier for this session.
+
+    **Successful Response (200 OK)**:
+    - JSON object confirming the session has started, including its PID.
+      Example: `{"cli_alias": "my-session", "status": "running", "pid": 12345, "message": "..."}`
+
+    **Error Responses**:
+    - `409 Conflict`: If a session with the same alias is already running.
+    - `500 Internal Server Error`: If the `llama-cli` executable cannot be found or fails to start.
+    """
+    try:
+        return await initialize_llama_cli_session(init_request)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in /initialize-llama-cli for alias {init_request.cli_alias}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
+
+@app.post(
+    "/initialize-batch-llama-cli", 
+    summary="Start Multiple Llama CLI Sessions", 
+    tags=["Llama CLI Management"], 
+    operation_id="start_batch_persistent_llama_cli_sessions"
+)
+async def initialize_batch_llama_cli(batch_request: BatchLlamaCliInitRequest = Body(...)):
+    """
+    Starts multiple persistent `llama-cli` sessions in a single batch request.
+    """
+    try:
+        return await handle_initialize_batch_llama_cli_configs(batch_request)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in /initialize-batch-llama-cli: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred during batch processing.")
+
+@app.post(
+    "/shutdown-batch-llama-cli", 
+    summary="Stop Multiple Llama CLI Sessions", 
+    tags=["Llama CLI Management"], 
+    operation_id="stop_batch_persistent_llama_cli_sessions"
+)
+async def shutdown_batch_llama_cli(batch_request: BatchLlamaCliRemoveRequest = Body(...)):
+    """
+    Stops multiple persistent `llama-cli` sessions in a single batch request.
+    """
+    try:
+        return await handle_remove_batch_llama_cli_configs(batch_request)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in /shutdown-batch-llama-cli: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred during batch processing.")
+
+@app.post(
+    "/shutdown-llama-cli/{cli_alias}", 
+    summary="Stop a Persistent Llama CLI Session", 
+    tags=["Llama CLI Management"], 
+    operation_id="stop_persistent_llama_cli_session"
+)
+async def shutdown_llama_cli(cli_alias: str = Path(..., description="The alias of the llama-cli session to stop.")):
+    """
+    Stops a specific, running `llama-cli` process.
+
+    **Path Parameters**:
+    - `cli_alias` (str): The unique alias of the session to terminate.
+
+    **Successful Response (200 OK)**:
+    - JSON object confirming termination.
+      Example: `{"cli_alias": "my-session", "status": "terminated", "message": "..."}`
+
+    **Error Responses**:
+    - `404 Not Found`: If no session with the given alias is found.
+    - `500 Internal Server Error`: For unexpected errors during termination.
+    """
+    try:
+        return await shutdown_llama_cli_session(cli_alias)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in /shutdown-llama-cli for alias {cli_alias}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
+
+@app.get(
+    "/llama-cli-status/{cli_alias}", 
+    summary="Get Status of a Llama CLI Session", 
+    tags=["Llama CLI Management"], 
+    operation_id="get_llama_cli_session_status"
+)
+async def get_llama_cli_status_endpoint(cli_alias: str = Path(..., description="The alias of the llama-cli session to query.")):
+    """
+    Retrieves the status and details of a running `llama-cli` session.
+
+    **Path Parameters**:
+    - `cli_alias` (str): The unique alias of the session.
+
+    **Successful Response (200 OK)**:
+    - A JSON object with details about the running process.
+      Example: `{"cli_alias": "my-session", "status": "running", "pid": 12345, ...}`
+
+    **Error Responses**:
+    - `404 Not Found`: If no session with the given alias is found.
+    """
+    try:
+        return await get_llama_cli_session_status(cli_alias)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in /llama-cli-status for alias {cli_alias}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
+
+@app.post(
+    "/chat-llama-cli", 
+    summary="Chat with a Persistent Llama CLI Session", 
+    tags=["Llama CLI Interaction"], 
+    operation_id="chat_with_persistent_llama_cli_session"
+)
+async def chat_llama_cli(chat_request: LlamaCliChatRequest = Body(...)):
+    """
+    Sends a prompt to a persistent `llama-cli` session and gets the response.
+
+    This endpoint communicates with a process that was previously started via
+    `/initialize-llama-cli`.
+
+    **Request Body**:
+    - `LlamaCliChatRequest`:
+        - `cli_alias` (str, required): Alias of the target running session.
+        - `prompt` (str, required): The user's message/prompt.
+        - Other parameters in this model are ignored, as the session is already configured.
+
+    **Successful Response (200 OK)**:
+    - JSON object containing the prompt and the response from `llama-cli`.
+      Example: `{"cli_alias": "my-session", "prompt": "Hello", "response": "Hi there!"}`
+
+    **Error Responses**:
+    - `404 Not Found`: If the target session is not found or not running.
+    - `503 Service Unavailable`: If there's a communication error with the process.
+    - `500 Internal Server Error`: For other unexpected errors.
+    """
+    try:
+        return await chat_with_llama_cli_session(chat_request)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in /chat-llama-cli for alias {chat_request.cli_alias}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
+
+@app.post(
+    "/batch-chat-llama-cli",
+    summary="Send a Batch of Chat Prompts to Llama CLI Sessions",
+    tags=["Llama CLI"],
+    operation_id="batch_chat_with_llama_cli"
+)
+async def batch_chat_with_llama_cli(batch_request: BatchLlamaCliChatRequest):
+    """
+    Sends multiple chat prompts to their corresponding llama-cli sessions in a single batch operation.
+
+    **Request Body**:
+    - `BatchLlamaCliChatRequest`: A JSON object containing a list of `requests`. Each item in this list
+      is a `LlamaCliChatRequest` object (see `/chat-llama-cli` endpoint for `LlamaCliChatRequest` details).
+
+    **Successful Response (200 OK)**:
+    - A JSON object containing a `results` list. Each item in this list corresponds to a
+      chat request from the input, containing either the successful JSON response from the
+      llama-cli session or an error object if that specific chat request failed.
+      Example: `{"results": [{"response": "..."}, {"error": "Session my-session not found", "status_code": 404}]}`
+
+    **Error Responses**:
+    - `500 Internal Server Error`: If an unexpected error occurs during the batch processing.
+      Individual chat failures are reported within the `results` list in the 200 OK response.
+    """
+    try:
+        return await handle_batch_chat_with_llama_cli(batch_request)
+    except Exception as e:
+        logger.error(f"Error in /batch-chat-llama-cli endpoint: {str(e)}", exc_info=True)
+        # Ensure a generic message for unexpected errors
+        raise HTTPException(status_code=500, detail="An unexpected error occurred while processing the batch chat request.")
+
 # Parallel multi-chat endpoint
-@app.post("/multichat", summary="Send Multiple Chat Requests to BitNet Servers", tags=["Interaction"])
+@app.post(
+    "/multichat", 
+    summary="Send Multiple Chat Requests to BitNet Servers", 
+    tags=["Interaction"], 
+    operation_id="send_multichat_requests_to_bitnet_servers"
+)
 async def multichat(multichat_request: MultiChatRequest):
     """
     Sends multiple chat messages to BitNet server instances concurrently.
@@ -434,7 +725,7 @@ async def multichat(multichat_request: MultiChatRequest):
       Individual chat failures are reported within the `results` list in the 200 OK response.
     """
     try:
-        return await multichat_with_bitnet(multichat_request)
+        return await handle_multichat_with_bitnet_server(multichat_request)
     except Exception as e:
         logger.error(f"Error in /multichat endpoint: {str(e)}", exc_info=True)
         # Ensure a generic message for unexpected errors

@@ -135,3 +135,12 @@ def parse_perplexity_data(log: str) -> Dict[str, Any]:
             data['system_info'] = parse_system_info(line)
 
     return data
+
+def is_safe_cli_alias(alias: str) -> bool:
+    """
+    Validates that a CLI alias contains only safe characters.
+    Allowed: alphanumeric, hyphens, underscores.
+    """
+    # Regex to match only alphanumeric characters, hyphens, and underscores.
+    # Ensures the alias is simple and safe for use in logs and as a key.
+    return re.match(r'^[a-zA-Z0-9_-]+$', alias) is not None
