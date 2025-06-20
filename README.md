@@ -1,7 +1,5 @@
 # FastAPI-BitNet Orchestrator
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
 This project provides a robust REST API built with FastAPI and Docker to manage and interact with `llama.cpp`-based BitNet model instances. It allows developers and researchers to programmatically control `llama-cli` processes for automated testing, benchmarking, and interactive chat sessions.
 
 It serves as a backend replacement for the [Electron-BitNet](https://github.com/grctest/Electron-BitNet) project, offering enhanced performance, scalability, and persistent chat sessions.
