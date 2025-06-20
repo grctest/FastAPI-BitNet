@@ -108,12 +108,18 @@ async def start_cli_chat_process(
         '-t', str(threads),
         '-c', str(ctx_size),
         '-n', str(n_predict),
-        '--temp', str(temperature),
-        '--repeat-penalty', str(repeat_penalty),
-        '--top-k', str(top_k),
-        '--top-p', str(top_p),
     ]
-    
+
+    # Only add optional arguments if they are not None or blank
+    if temperature is not None and str(temperature) != '':
+        command.extend(['--temp', str(temperature)])
+    if repeat_penalty is not None and str(repeat_penalty) != '':
+        command.extend(['--repeat-penalty', str(repeat_penalty)])
+    if top_k is not None and str(top_k) != '':
+        command.extend(['--top-k', str(top_k)])
+    if top_p is not None and str(top_p) != '':
+        command.extend(['--top-p', str(top_p)])
+
     if system_prompt:
         command.extend(['-p', system_prompt])
 
