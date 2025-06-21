@@ -154,5 +154,14 @@ class BatchLlamaCliRemoveRequest(BaseModel):
             raise ValueError('An alias in the list contains invalid characters. Use only alphanumeric, hyphens, and underscores.')
         return v
 
+class BatchLlamaCliStatusRequest(BaseModel):
+    aliases: list[str] = Field(..., description="A list of llama-cli configuration aliases to check the status of.")
+
+    @validator('aliases', each_item=True)
+    def validate_aliases(cls, v):
+        if not is_safe_cli_alias(v):
+            raise ValueError('An alias in the list contains invalid characters. Use only alphanumeric, hyphens, and underscores.')
+        return v
+
 class BatchLlamaCliChatRequest(BaseModel):
     requests: list[LlamaCliChatRequest] = Field(..., description="A list of chat requests to process.")

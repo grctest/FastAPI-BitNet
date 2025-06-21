@@ -12,7 +12,8 @@ from lib.models import (
     LlamaCliChatRequest,
     BatchLlamaCliInitRequest,
     BatchLlamaCliRemoveRequest,
-    BatchLlamaCliChatRequest
+    BatchLlamaCliChatRequest,
+    BatchLlamaCliStatusRequest
 )
 
 from lib.endpoints.chat_endpoints import ChatRequest, MultiChatRequest
@@ -46,7 +47,8 @@ from lib.endpoints.llama_cli_endpoints import (
     chat_with_llama_cli_session,
     handle_initialize_batch_llama_cli_configs,
     handle_remove_batch_llama_cli_configs,
-    handle_batch_chat_with_llama_cli
+    handle_batch_chat_with_llama_cli,
+    handle_get_batch_llama_cli_status
 )
 
 # --- Logging Configuration ---
@@ -627,6 +629,33 @@ async def get_llama_cli_status_endpoint(cli_alias: str = Path(..., description="
     except Exception as e:
         logger.error(f"Unexpected error in /llama-cli-status for alias {cli_alias}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
+
+@app.post(
+    "/batch-llama-cli-status",
+    summary="Get Status of Multiple Llama CLI Sessions",
+    tags=["Llama CLI Management"],
+    operation_id="get_batch_llama_cli_session_status"
+)
+async def batch_llama_cli_status(request: BatchLlamaCliStatusRequest):
+    """
+    Retrieves the status of multiple `llama-cli` sessions in a single batch request.
+
+    **Request Body**:
+    - `BatchLlamaCliStatusRequest`: A JSON object containing a list of `aliases` (strings)
+      of the `llama-cli` sessions to check.
+
+    **Successful Response (200 OK)**:
+    - A JSON list where each item corresponds to an alias in the request, detailing its
+      status (running/stopped), PID (if running), and configuration.
+
+    **Error Responses**:
+    - `500 Internal Server Error`: If an unexpected error occurs during the batch processing logic.
+    """
+    try:
+        return await handle_get_batch_llama_cli_status(request)
+    except Exception as e:
+        logger.error(f"Error in /batch-llama-cli-status endpoint: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred while fetching batch CLI status: {str(e)}")
 
 @app.post(
     "/chat-llama-cli", 

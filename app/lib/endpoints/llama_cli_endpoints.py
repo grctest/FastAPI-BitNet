@@ -10,7 +10,8 @@ from ..models import (
     LlamaCliChatRequest,
     BatchLlamaCliInitRequest,
     BatchLlamaCliRemoveRequest,
-    BatchLlamaCliChatRequest
+    BatchLlamaCliChatRequest,
+    BatchLlamaCliStatusRequest
 )
 
 # Import the process management functions for persistent sessions
@@ -199,4 +200,22 @@ async def handle_batch_chat_with_llama_cli(batch_request: BatchLlamaCliChatReque
             return {"cli_alias": req.cli_alias, "status": "error", "detail": "An unexpected server error occurred.", "status_code": 500}
 
     results = await asyncio.gather(*(process_request(req) for req in batch_request.requests))
+    return results
+
+async def handle_get_batch_llama_cli_status(batch_request: BatchLlamaCliStatusRequest) -> List[Dict[str, Any]]:
+    """
+    Processes a batch request to get the status of multiple persistent llama-cli sessions.
+    """
+    async def process_request(alias: str):
+        try:
+            # Reuse the single status handler logic
+            result = await get_llama_cli_session_status(alias)
+            return {"cli_alias": alias, "status": "success", "data": result}
+        except HTTPException as e:
+            return {"cli_alias": alias, "status": "error", "detail": e.detail, "status_code": e.status_code}
+        except Exception as e:
+            logger.error(f"Unexpected error processing batch status for alias {alias}: {str(e)}", exc_info=True)
+            return {"cli_alias": alias, "status": "error", "detail": "An unexpected server error occurred.", "status_code": 500}
+
+    results = await asyncio.gather(*(process_request(alias) for alias in batch_request.aliases))
     return results
