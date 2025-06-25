@@ -4,6 +4,7 @@ import logging
 
 from fastapi import FastAPI, Query, HTTPException, Body, status, Path
 from fastapi_mcp import FastApiMCP
+from lib.endpoints.server_endpoints import SingleServerInitRequest
 
 from lib.models import (
     ModelEnum, 
@@ -164,7 +165,7 @@ async def initialize_server(
     - `500 Internal Server Error`: If the server binary is not found or fails to start for other reasons.
     """
     try:
-        return await handle_initialize_server(
+        single_server_init_request = SingleServerInitRequest(
             threads=threads,
             ctx_size=ctx_size,
             port=port,
@@ -172,6 +173,7 @@ async def initialize_server(
             n_predict=n_predict,
             temperature=temperature
         )
+        return await handle_initialize_server(single_server_init_request)
     except Exception as e:
         logger.error(f"Error in /initialize-server endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
